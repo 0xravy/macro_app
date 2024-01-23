@@ -1,0 +1,35 @@
+body {
+    display: grid;
+    place-items: center;
+    height: 100vh;
+    font-size: 1.5rem;
+    background: #181818;
+    color: #fff;
+}
+
+* {
+    font-family: monospace;
+}
+
+.container {
+    display: grid;
+    gap: 3px;
+}
+
+.tab {
+    display: inline-block;
+    width: 30px;
+    height: 5px;
+}
+
+.elem {
+    color: orange;
+}
+
+.int {
+    color: #c6919a;
+}
+
+.string {
+    color: yellowgreen;
+}
