@@ -1,5 +1,5 @@
-use super::tauri_commands::get_data;
 use rdev::{simulate, Button, Event, EventType, Key};
+use std::sync::{Arc, Mutex};
 
 pub struct ModifierWatcher {
     captures: Vec<Key>,
@@ -100,185 +100,212 @@ fn send(event_type: &EventType) {
     }
 }
 
-pub fn mouse(turi_window: tauri::Window) {
-    let mut mouse_map: Vec<MouseMap> = Vec::new();
-    let mut is_record: bool = false;
-    let mut mouse_is_press: bool = false;
-    let mut key_is_press: bool = false;
-    let mut last_x = 0_f64;
-    let mut last_y = 0_f64;
-    let mut last_btn = Button::Unknown(0);
-    let mut last_key = Key::Unknown(0);
-    let mut modifier = ModifierWatcher::new(vec![Key::MetaLeft, Key::ControlLeft]);
+#[derive(Clone)]
+pub struct InputManager {
+    speed: Arc<Mutex<u64>>,
+}
 
-    let macro_loop = move |event: Event| {
-        let w = turi_window.clone();
-        let string_btn = format!("{:?}", last_btn);
-        let string_key = format!("{:?}", last_key);
-        let speed = match &event.event_type {
-            /* mouse move */
-            EventType::MouseMove { x, y } => {
-                last_x = *x;
-                last_y = *y;
-                let _ = w.emit(
-                    "mouse",
-                    Send2Tuari {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: string_btn,
-                        mouse_is_press,
-                        key: string_key,
-                        key_is_press,
-                    },
-                );
-            }
+impl InputManager {
+    pub fn new() -> InputManager {
+        InputManager {
+            speed: Arc::new(Mutex::new(0)),
+        }
+    }
 
-            /* button press */
-            EventType::ButtonPress(btn) => {
-                mouse_is_press = true;
-                last_btn = *btn;
-                if is_record {
-                    mouse_map.push(MouseMap {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: Some(last_btn),
-                        mouse_is_press,
-                        key: Some(last_key),
-                        key_is_press,
-                    });
+    pub fn hook(&self, window: tauri::Window) {
+        let mut mouse_map: Vec<MouseMap> = Vec::new();
+        let mut is_record: bool = false;
+        let mut mouse_is_press: bool = false;
+        let mut key_is_press: bool = false;
+        let mut last_x = 0_f64;
+        let mut last_y = 0_f64;
+        let mut last_btn = Button::Unknown(0);
+        let mut last_key = Key::Unknown(0);
+        let mut modifier = ModifierWatcher::new(vec![Key::Alt]);
+
+        let w = window.clone();
+
+        let self_clone = Arc::new(self.clone());
+
+        let macro_loop = move |event: Event| {
+            let string_btn = format!("{:?}", last_btn);
+            let string_key = format!("{:?}", last_key);
+
+            let _evets_type_loop = match &event.event_type {
+                /* mouse move */
+                EventType::MouseMove { x, y } => {
+                    last_x = *x;
+                    last_y = *y;
+                    let _ = w.emit(
+                        "mouse",
+                        Send2Tuari {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: string_btn,
+                            mouse_is_press,
+                            key: string_key,
+                            key_is_press,
+                        },
+                    );
                 }
 
-                let _ = w.emit(
-                    "mouse",
-                    Send2Tuari {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: string_btn,
-                        mouse_is_press,
-                        key: string_key,
-                        key_is_press,
-                    },
-                );
-            }
-
-            /* button release */
-            EventType::ButtonRelease(btn) => {
-                mouse_is_press = false;
-                last_btn = *btn;
-                if is_record {
-                    mouse_map.push(MouseMap {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: Some(last_btn),
-                        mouse_is_press,
-                        key: Some(last_key),
-                        key_is_press,
-                    });
-                }
-                let _ = w.emit(
-                    "mouse",
-                    Send2Tuari {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: string_btn,
-                        mouse_is_press,
-                        key: string_key,
-                        key_is_press,
-                    },
-                );
-            }
-
-            /* key press */
-            EventType::KeyPress(key) => {
-                modifier.capture(*key);
-                key_is_press = true;
-                last_key = *key;
-                if is_record {
-                    mouse_map.push(MouseMap {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: Some(last_btn),
-                        mouse_is_press,
-                        key: Some(last_key),
-                        key_is_press,
-                    });
-                }
-
-                /* start recording */
-                if Key::KeyZ == *key && modifier.passed() {
-                    w.emit("status", Status::run_recording()).ok();
-                    for mouse_obj in &mouse_map {
-                        send(&EventType::MouseMove {
-                            x: mouse_obj.x,
-                            y: mouse_obj.y,
+                /* button press */
+                EventType::ButtonPress(btn) => {
+                    mouse_is_press = true;
+                    last_btn = *btn;
+                    if is_record {
+                        mouse_map.push(MouseMap {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: Some(last_btn),
+                            mouse_is_press,
+                            key: Some(last_key),
+                            key_is_press,
                         });
+                    }
 
-                        if mouse_obj.mouse_click.is_some() {
-                            if mouse_obj.mouse_is_press {
-                                send(&EventType::ButtonPress(mouse_obj.mouse_click.unwrap()));
-                            } else {
-                                send(&EventType::ButtonRelease(mouse_obj.mouse_click.unwrap()));
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(300));
-                        } else if mouse_obj.key.is_some() {
-                            if mouse_obj.key_is_press {
-                                send(&EventType::KeyPress(mouse_obj.key.unwrap()));
-                            } else {
-                                send(&EventType::KeyRelease(mouse_obj.key.unwrap()));
+                    let _ = w.emit(
+                        "mouse",
+                        Send2Tuari {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: string_btn,
+                            mouse_is_press,
+                            key: string_key,
+                            key_is_press,
+                        },
+                    );
+                }
+
+                /* button release */
+                EventType::ButtonRelease(btn) => {
+                    mouse_is_press = false;
+                    last_btn = *btn;
+                    if is_record {
+                        mouse_map.push(MouseMap {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: Some(last_btn),
+                            mouse_is_press,
+                            key: Some(last_key),
+                            key_is_press,
+                        });
+                    }
+                    let _ = w.emit(
+                        "mouse",
+                        Send2Tuari {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: string_btn,
+                            mouse_is_press,
+                            key: string_key,
+                            key_is_press,
+                        },
+                    );
+                }
+
+                /* key press */
+                EventType::KeyPress(key) => {
+                    modifier.capture(*key);
+                    key_is_press = true;
+                    last_key = *key;
+                    if is_record {
+                        mouse_map.push(MouseMap {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: Some(last_btn),
+                            mouse_is_press,
+                            key: Some(last_key),
+                            key_is_press,
+                        });
+                    }
+
+                    /* start recording */
+                    if Key::KeyZ == *key && modifier.passed() {
+                        w.emit("status", Status::run_recording()).ok();
+                        for mouse_obj in &mouse_map {
+                            send(&EventType::MouseMove {
+                                x: mouse_obj.x,
+                                y: mouse_obj.y,
+                            });
+
+                            if mouse_obj.mouse_click.is_some() {
+                                if mouse_obj.mouse_is_press {
+                                    send(&EventType::ButtonPress(mouse_obj.mouse_click.unwrap()));
+                                } else {
+                                    send(&EventType::ButtonRelease(mouse_obj.mouse_click.unwrap()));
+                                }
+
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    *self_clone.speed.lock().unwrap(),
+                                ));
+
+                                println!("End Sleep");
+                            } else if mouse_obj.key.is_some() {
+                                if mouse_obj.key_is_press {
+                                    send(&EventType::KeyPress(mouse_obj.key.unwrap()));
+                                } else {
+                                    send(&EventType::KeyRelease(mouse_obj.key.unwrap()));
+                                }
                             }
                         }
                     }
+
+                    /* stop recording */
+                    if Key::KeyC == *key && modifier.passed() {
+                        is_record = false;
+                        mouse_map.clear();
+                        w.emit("status", Status::stop_recording()).ok();
+                    }
+
+                    /* start recording */
+                    if Key::KeyR == *key && modifier.passed() {
+                        mouse_map.clear();
+                        is_record = true;
+                        w.emit("status", Status::start_recording()).ok();
+                    }
+
+                    let _ = w.emit(
+                        "mouse",
+                        Send2Tuari {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: string_btn,
+                            mouse_is_press: false,
+                            key: string_key,
+                            key_is_press,
+                        },
+                    );
                 }
 
-                /* stop recording */
-                if Key::KeyC == *key && modifier.passed() {
-                    is_record = false;
-                    mouse_map.clear();
-                    w.emit("status", Status::stop_recording()).ok();
+                /* key release */
+                EventType::KeyRelease(key) => {
+                    key_is_press = false;
+                    last_key = *key;
+                    if is_record {
+                        mouse_map.push(MouseMap {
+                            x: last_x,
+                            y: last_y,
+                            mouse_click: Some(last_btn),
+                            mouse_is_press,
+                            key: Some(last_key),
+                            key_is_press,
+                        });
+                    }
+
+                    modifier.clear();
                 }
-
-                /* start recording */
-                if Key::KeyR == *key && modifier.passed() {
-                    mouse_map.clear();
-                    is_record = true;
-                    w.emit("status", Status::start_recording()).ok();
-                }
-
-                let _ = w.emit(
-                    "mouse",
-                    Send2Tuari {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: string_btn,
-                        mouse_is_press: false,
-                        key: string_key,
-                        key_is_press,
-                    },
-                );
-            }
-
-            /* key release */
-            EventType::KeyRelease(key) => {
-                key_is_press = false;
-                last_key = *key;
-                if is_record {
-                    mouse_map.push(MouseMap {
-                        x: last_x,
-                        y: last_y,
-                        mouse_click: Some(last_btn),
-                        mouse_is_press,
-                        key: Some(last_key),
-                        key_is_press,
-                    });
-                }
-
-                modifier.clear();
-            }
-            _ => (),
+                _ => (),
+            };
         };
-    };
 
-    if let Err(error) = rdev::listen(macro_loop) {
-        println!("Error: {:?}", error)
+        if let Err(error) = rdev::listen(macro_loop) {
+            println!("Error: {:?}", error)
+        }
+    }
+
+    pub fn set_speed(&self, speed: u64) {
+        let mut speed_ref = self.speed.lock().unwrap();
+        *speed_ref = speed;
     }
 }
